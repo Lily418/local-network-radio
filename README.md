@@ -18,3 +18,9 @@ My device has Wi-Fi connectivity and supports streaming Spotify, Amazon Music an
 ## State of the project
 
 This project is currently in a proof of concept stage 🚧
+
+## Setting up custom internet radio channels on Frontier Silicon API
+
+There are some instructions for setting up custom radio stations via Robert's radio station database partner and also how to access the Frontier Silicon dashboard.
+
+[How to add a custom URL to a Roberts Stream Internet radio](https://web.archive.org/web/20240606233710/https://confusedbird.com/thread-7.html)
