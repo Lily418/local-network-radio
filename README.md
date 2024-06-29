@@ -17,7 +17,14 @@ My device has Wi-Fi connectivity and supports streaming Spotify, Amazon Music an
 
 ## State of the project
 
-This project is currently in a proof of concept stage 🚧
+This is currently a proof of concept, there is currently a very basic interface to see the currently playing song, the time elapsed in the track and to switch the song playing.
+
+Next on the roadmap will be
+
+- Playing and Pausing the Track
+- Seeking the Track
+- Using the `afsapi` library (as seen in index.py) to add volume control
+- Allowing queueing of tracks
 
 ## Setting up custom internet radio channels on Frontier Silicon API
 
