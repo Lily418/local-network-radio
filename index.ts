@@ -19,7 +19,9 @@ app.get("/music-library", function (req: Request, res: Response) {
 });
 
 let nextFileToPlay = 0;
-let requestedFile: number = 0;
+let requestedFile: number | null = null;
+let responses: Response[] = [];
+
 
 app.post("/play/:index", function (req: Request, res: Response) {
   const index = req.params.index;
@@ -42,7 +44,7 @@ const fileBuffers = fileNames.map((file) => {
   return fs.readFileSync(`music-assets/${file}`);
 });
 
-const writeNextBytes = (res: Response, bytesWritten: number, start: number = performance.now(), offset: number | null = null, arrayMusicBuffer = new ArrayBuffer(0), dataView = new DataView(new ArrayBuffer(0))) => {
+const writeNextBytes = (bytesWritten: number = 0, start: number = performance.now(), offset: number | null = null, arrayMusicBuffer = new ArrayBuffer(0), dataView = new DataView(new ArrayBuffer(0))) => {
 
   let bytesWrittenCounter = 0;
   const secondsElapsed = (performance.now() - start) / 1000;
@@ -54,10 +56,10 @@ const writeNextBytes = (res: Response, bytesWritten: number, start: number = per
   // console.log("targetBytesSent", targetBytesSent);
   // console.log("bytesWritten", bytesWritten);
 
-  if (requestedFile !== nextFileToPlay - 1) {
-    console.log("resetting offset")
-    offset = null;
+  if (requestedFile !== null) {
     nextFileToPlay = requestedFile;
+    offset = null;
+    requestedFile = null;
   }
 
   while (bytesWrittenCounter <= bytesToSend) {
@@ -78,8 +80,6 @@ const writeNextBytes = (res: Response, bytesWritten: number, start: number = per
         .readTags(dataView)
         .filter((tag: any) => tag._section.type === "frame")[0];
       offset = firstFrame._section.offset;
-      console.log("First Frame Offset", offset)
-      console.log("incrementing nextFileToPlay");
       nextFileToPlay++;
     } else {
       if (!fileBuffers) {
@@ -87,19 +87,20 @@ const writeNextBytes = (res: Response, bytesWritten: number, start: number = per
       }
       const frame: any = mp3Parser.readFrame(dataView as DataView, offset);
 
-      console.log("offset", offset)
-
       if (!frame) {
         offset = null;
         continue;
       }
 
-      res.write(
-        fileBuffers[nextFileToPlay - 1].subarray(
-          frame._section.offset,
-          frame._section.offset + frame._section.byteLength,
-        ),
-      );
+      responses.forEach((res) => {
+        res.write(
+          fileBuffers[nextFileToPlay - 1].subarray(
+            frame._section.offset,
+            frame._section.offset + frame._section.byteLength,
+          ),
+        );
+      })
+
 
       bytesWrittenCounter += frame._section.sampleLength;
       offset = frame._section?.nextFrameIndex;
@@ -109,8 +110,8 @@ const writeNextBytes = (res: Response, bytesWritten: number, start: number = per
 
   if (nextFileToPlay <= fileNames.length) {
     setTimeout(() => {
-      writeNextBytes(res, bytesWritten += bytesWrittenCounter, start, offset, arrayMusicBuffer, dataView);
-    }, 1000);
+      writeNextBytes(bytesWritten += bytesWrittenCounter, start, offset, arrayMusicBuffer, dataView);
+    }, 50);
   }
 }
 
@@ -120,12 +121,13 @@ app.get("/", function (req: Request, res: Response) {
     "Content-Type": "audio/mp3",
   };
   res.writeHead(200, head);
-
-  setTimeout(() => {
-    writeNextBytes(res, 0);
-  }, 0);
+  responses.push(res);
 });
 
 app.listen(3000, function () {
   console.log("Listening on port 3000!");
 });
+
+setTimeout(() => {
+  writeNextBytes();
+}, 0);
