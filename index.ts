@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from "express";
 import cors from "cors";
 import fs from "fs";
 import morgan from "morgan";
+import { performance } from 'perf_hooks';
 const mp3Parser = require("mp3-parser");
 
 const app: Express = express();
@@ -17,38 +18,55 @@ app.get("/music-library", function (req: Request, res: Response) {
   res.json(files);
 });
 
-app.get("/", function (req: Request, res: Response) {
-  let nextFileToPlay = 0;
+let nextFileToPlay = 0;
+let requestedFile: number = 0;
 
-  const fileNames = fs
-    .readdirSync("./music-assets")
-    .filter((file) => file.endsWith("mp3"));
+app.post("/play/:index", function (req: Request, res: Response) {
+  const index = req.params.index;
+  console.log("Playing song at index", index);
+  requestedFile = parseInt(index);
+  res.json({ message: "Playing song at index" });
 
-  const fileLengths = fileNames.map((file) => {
-    return fs.statSync(`music-assets/${file}`).size;
-  });
+})
 
-  const fileBuffers = fileNames.map((file) => {
-    return fs.readFileSync(`music-assets/${file}`);
-  });
 
-  const head = {
-    "Content-Type": "audio/mp3",
-  };
-  res.writeHead(200, head);
+const fileNames = fs
+  .readdirSync("./music-assets")
+  .filter((file) => file.endsWith("mp3"));
 
-  let chunksWrittenCounter = 0;
-  const chunksToSend = 100;
-  let offset = null;
-  let dataView: DataView = new DataView(new ArrayBuffer(0));
-  let arrayMusicBuffer: ArrayBuffer = new ArrayBuffer(0);
-  while (nextFileToPlay <= fileNames.length) {
-    if (offset === null || chunksWrittenCounter >= chunksToSend) {
+const fileLengths = fileNames.map((file) => {
+  return fs.statSync(`music-assets/${file}`).size;
+});
+
+const fileBuffers = fileNames.map((file) => {
+  return fs.readFileSync(`music-assets/${file}`);
+});
+
+const writeNextBytes = (res: Response, bytesWritten: number, start: number = performance.now(), offset: number | null = null, arrayMusicBuffer = new ArrayBuffer(0), dataView = new DataView(new ArrayBuffer(0))) => {
+
+  let bytesWrittenCounter = 0;
+  const secondsElapsed = (performance.now() - start) / 1000;
+  const targetBytesSent = 44100 * (secondsElapsed + 1);
+  const bytesToSend = targetBytesSent - bytesWritten;
+
+  // console.log("secondsElapsed", secondsElapsed)
+  // console.log("bytesToSend", bytesToSend);
+  // console.log("targetBytesSent", targetBytesSent);
+  // console.log("bytesWritten", bytesWritten);
+
+  if (requestedFile !== nextFileToPlay - 1) {
+    console.log("resetting offset")
+    offset = null;
+    nextFileToPlay = requestedFile;
+  }
+
+  while (bytesWrittenCounter <= bytesToSend) {
+    if (offset === null) {
+      console.log("Playing new song")
+
       if (nextFileToPlay === fileNames.length) {
         break;
       }
-
-      chunksWrittenCounter = 0;
 
       arrayMusicBuffer = new ArrayBuffer(fileLengths[nextFileToPlay]);
       dataView = new DataView(arrayMusicBuffer);
@@ -60,12 +78,16 @@ app.get("/", function (req: Request, res: Response) {
         .readTags(dataView)
         .filter((tag: any) => tag._section.type === "frame")[0];
       offset = firstFrame._section.offset;
+      console.log("First Frame Offset", offset)
+      console.log("incrementing nextFileToPlay");
       nextFileToPlay++;
     } else {
       if (!fileBuffers) {
         throw new Error("musicBuffer is null");
       }
       const frame: any = mp3Parser.readFrame(dataView as DataView, offset);
+
+      console.log("offset", offset)
 
       if (!frame) {
         offset = null;
@@ -79,10 +101,29 @@ app.get("/", function (req: Request, res: Response) {
         ),
       );
 
-      chunksWrittenCounter++;
+      bytesWrittenCounter += frame._section.sampleLength;
       offset = frame._section?.nextFrameIndex;
     }
   }
+
+
+  if (nextFileToPlay <= fileNames.length) {
+    setTimeout(() => {
+      writeNextBytes(res, bytesWritten += bytesWrittenCounter, start, offset, arrayMusicBuffer, dataView);
+    }, 1000);
+  }
+}
+
+app.get("/", function (req: Request, res: Response) {
+
+  const head = {
+    "Content-Type": "audio/mp3",
+  };
+  res.writeHead(200, head);
+
+  setTimeout(() => {
+    writeNextBytes(res, 0);
+  }, 0);
 });
 
 app.listen(3000, function () {
