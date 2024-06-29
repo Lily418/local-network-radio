@@ -3,9 +3,11 @@ import cors from "cors";
 import fs from "fs";
 import morgan from "morgan";
 import { performance } from 'perf_hooks';
+import expressWs from 'express-ws';
+
 const mp3Parser = require("mp3-parser");
 
-const app: Express = express();
+const { app, getWss, applyTo } = expressWs(express());
 
 app.use(cors());
 app.use(morgan("dev"));
@@ -21,6 +23,9 @@ app.get("/music-library", function (req: Request, res: Response) {
 let nextFileToPlay = 0;
 let requestedFile: number | null = null;
 let responses: Response[] = [];
+let trackLocationInSeconds = 0;
+let trackLength = 0;
+let firstFrameOffset = 0;
 
 
 app.post("/play/:index", function (req: Request, res: Response) {
@@ -60,6 +65,7 @@ const writeNextBytes = (bytesWritten: number = 0, start: number = performance.no
     nextFileToPlay = requestedFile;
     offset = null;
     requestedFile = null;
+    trackLocationInSeconds = 0;
   }
 
   while (bytesWrittenCounter <= bytesToSend) {
@@ -79,7 +85,9 @@ const writeNextBytes = (bytesWritten: number = 0, start: number = performance.no
       const firstFrame = mp3Parser
         .readTags(dataView)
         .filter((tag: any) => tag._section.type === "frame")[0];
+      console.log("firstFrame", firstFrame);
       offset = firstFrame._section.offset;
+      firstFrameOffset = offset as number;
       nextFileToPlay++;
     } else {
       if (!fileBuffers) {
@@ -102,6 +110,7 @@ const writeNextBytes = (bytesWritten: number = 0, start: number = performance.no
       })
 
 
+      trackLocationInSeconds = (offset - firstFrameOffset) / 44100;
       bytesWrittenCounter += frame._section.sampleLength;
       offset = frame._section?.nextFrameIndex;
     }
@@ -123,6 +132,16 @@ app.get("/", function (req: Request, res: Response) {
   res.writeHead(200, head);
   responses.push(res);
 });
+
+app.ws('/', (ws, req) => {
+  ws.on('message', (msg: String) => {
+      ws.send(JSON.stringify({
+        fileName: fileNames[nextFileToPlay - 1],
+        trackLocationInSeconds
+      }));
+  });
+});
+
 
 app.listen(3000, function () {
   console.log("Listening on port 3000!");
