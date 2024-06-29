@@ -28,14 +28,14 @@ const Example =  () => {
   const { isPending, error, data } = useQuery({
     queryKey: ['music'],
     queryFn: () =>
-      fetch('http://localhost:3000/music-library').then((res) =>
+      fetch(`http://${window.location.hostname}:3000/music-library`).then((res) =>
         res.json(),
       ),
   })
 
   const playSong = useMutation({
     mutationFn: (index: number) => {
-      return fetch(`http://localhost:3000/play/${index}`, {
+      return fetch(`http://${window.location.hostname}:3000/play/${index}`, {
         method: 'POST'
       }).then((res) =>
         res.json(),
@@ -44,7 +44,7 @@ const Example =  () => {
   })
 
 
-  const websocketURL = 'ws://localhost:3000';
+  const websocketURL = `ws://${window.location.hostname}:3000`;
   const { sendMessage, lastMessage, readyState, lastJsonMessage } = useWebSocket(websocketURL);
 
   useEffect(() => {
