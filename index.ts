@@ -2,8 +2,11 @@ import express, { Express, Request, Response } from "express";
 import cors from "cors";
 import fs from "fs";
 import morgan from "morgan";
-import { performance } from 'perf_hooks';
-import expressWs from 'express-ws';
+import { performance } from "perf_hooks";
+import expressWs from "express-ws";
+import ffmpeg from "fluent-ffmpeg";
+import path from "path";
+import { MusicTracking } from "./src/music-tracking";
 
 const mp3Parser = require("mp3-parser");
 
@@ -23,19 +26,15 @@ app.get("/music-library", function (req: Request, res: Response) {
 let nextFileToPlay = 0;
 let requestedFile: number | null = null;
 let responses: Response[] = [];
-let trackLocationInSeconds = 0;
 let trackLength = 0;
-let firstFrameOffset = 0;
-
+let musicTracking = new MusicTracking();
 
 app.post("/play/:index", function (req: Request, res: Response) {
   const index = req.params.index;
   console.log("Playing song at index", index);
   requestedFile = parseInt(index);
   res.json({ message: "Playing song at index" });
-
-})
-
+});
 
 const fileNames = fs
   .readdirSync("./music-assets")
@@ -49,8 +48,15 @@ const fileBuffers = fileNames.map((file) => {
   return fs.readFileSync(`music-assets/${file}`);
 });
 
-const writeNextBytes = (bytesWritten: number = 0, start: number = performance.now(), offset: number | null = null, arrayMusicBuffer = new ArrayBuffer(0), dataView = new DataView(new ArrayBuffer(0))) => {
+musicTracking.loadTrack(
+  fileBuffers[nextFileToPlay],
+  fileLengths[nextFileToPlay],
+);
 
+const writeNextBytes = (
+  bytesWritten: number = 0,
+  start: number = performance.now(),
+) => {
   let bytesWrittenCounter = 0;
   const secondsElapsed = (performance.now() - start) / 1000;
   const targetBytesSent = 44100 * (secondsElapsed + 1);
@@ -63,69 +69,53 @@ const writeNextBytes = (bytesWritten: number = 0, start: number = performance.no
 
   if (requestedFile !== null) {
     nextFileToPlay = requestedFile;
-    offset = null;
+    musicTracking.loadTrack(
+      fileBuffers[nextFileToPlay],
+      fileLengths[nextFileToPlay],
+    );
     requestedFile = null;
-    trackLocationInSeconds = 0;
   }
 
   while (bytesWrittenCounter <= bytesToSend) {
-    if (offset === null) {
-      console.log("Playing new song")
+    if (!fileBuffers) {
+      throw new Error("musicBuffer is null");
+    }
 
+    const frame = musicTracking.readFrame();
+
+    if (!frame) {
       if (nextFileToPlay === fileNames.length) {
-        break;
+        nextFileToPlay = 0;
       }
+      musicTracking.loadTrack(
+        fileBuffers[nextFileToPlay],
+        fileLengths[nextFileToPlay],
+      );
+      continue;
+    }
 
-      arrayMusicBuffer = new ArrayBuffer(fileLengths[nextFileToPlay]);
-      dataView = new DataView(arrayMusicBuffer);
-      for (var i = 0; i < Buffer.byteLength(fileBuffers[nextFileToPlay]); i++) {
-        dataView.setUint8(i, fileBuffers[nextFileToPlay][i]);
-      }
-
-      const firstFrame = mp3Parser
-        .readTags(dataView)
-        .filter((tag: any) => tag._section.type === "frame")[0];
-      console.log("firstFrame", firstFrame);
-      offset = firstFrame._section.offset;
-      firstFrameOffset = offset as number;
-      nextFileToPlay++;
-    } else {
-      if (!fileBuffers) {
-        throw new Error("musicBuffer is null");
-      }
-      const frame: any = mp3Parser.readFrame(dataView as DataView, offset);
-
-      if (!frame) {
-        offset = null;
-        continue;
-      }
-
-      responses.forEach((res) => {
-        res.write(
-          fileBuffers[nextFileToPlay - 1].subarray(
+    responses.forEach((res) => {
+      res.write(
+        musicTracking
+          .getCurrentlyPlayingTrack()
+          .subarray(
             frame._section.offset,
             frame._section.offset + frame._section.byteLength,
           ),
-        );
-      })
+      );
+    });
 
-
-      trackLocationInSeconds = (offset - firstFrameOffset) / 44100;
-      bytesWrittenCounter += frame._section.sampleLength;
-      offset = frame._section?.nextFrameIndex;
-    }
+    bytesWrittenCounter += frame._section.sampleLength;
   }
-
 
   if (nextFileToPlay <= fileNames.length) {
     setTimeout(() => {
-      writeNextBytes(bytesWritten += bytesWrittenCounter, start, offset, arrayMusicBuffer, dataView);
+      writeNextBytes((bytesWritten += bytesWrittenCounter), start);
     }, 50);
   }
-}
+};
 
 app.get("/", function (req: Request, res: Response) {
-
   const head = {
     "Content-Type": "audio/mp3",
   };
@@ -133,15 +123,44 @@ app.get("/", function (req: Request, res: Response) {
   responses.push(res);
 });
 
-app.ws('/', (ws, req) => {
-  ws.on('message', (msg: String) => {
-      ws.send(JSON.stringify({
+// app.get("/convert", function (req: Request, res: Response) {
+//   // const head = {
+//   //   "Content-Type": "audio/mp3",
+//   // };
+//   // res.writeHead(200, head);
+
+// app.get("/ffmpeg", async (req: Request, res: Response) => {
+//   await getFileExtensionsSupported();
+//   return res.json({});
+// });
+
+//   const filePath = path.resolve(__dirname, `music-assets/thwack.flac`);
+//   console.log("filePath", filePath);
+//   const proc = ffmpeg(filePath)
+//     .format("mp3")
+//     .outputOptions(["-vn", "-ar 44100", "-ac 2", "-b:a 192k"])
+//     .on("end", function () {
+//       console.log("file has been converted succesfully");
+//     })
+//     .on("error", function (err) {
+//       console.log("an error happened: " + err.message);
+//     })
+//     .pipe(fs.createWriteStream("thwack.mp3"));
+//   // .outputOptions(["-vn", "-ar 44100", "-ac 2", "-b:a 192k"])
+//   // return res.json({ file: `music-assets/${fileNames[0]}` });
+//   return res.json({});
+// });
+
+app.ws("/", (ws, req) => {
+  ws.on("message", (msg: String) => {
+    ws.send(
+      JSON.stringify({
         fileName: fileNames[nextFileToPlay - 1],
-        trackLocationInSeconds
-      }));
+        trackLocationInSeconds: musicTracking.getTrackLocationInSeconds(),
+      }),
+    );
   });
 });
-
 
 app.listen(3000, function () {
   console.log("Listening on port 3000!");

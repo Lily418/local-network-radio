@@ -2,3 +2,5 @@ node_modules/
 music-assets/*
 !music-assets/.gitkeep
 venv/
+music-cache/
+!music-assets/.gitkeep
